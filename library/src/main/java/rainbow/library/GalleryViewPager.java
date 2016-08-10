@@ -1,3 +1,5 @@
+package rainbow.library;
+
 /*
  * Copyright (C) 2011 The Android Open Source Project
  *
@@ -13,8 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package rainbow.library;
 
 import android.content.Context;
 import android.content.res.Resources;
@@ -39,6 +39,8 @@ import android.support.v4.view.PagerAdapter;
 import android.support.v4.view.VelocityTrackerCompat;
 import android.support.v4.view.ViewCompat;
 import android.support.v4.view.ViewConfigurationCompat;
+import android.support.v4.view.ViewPager;
+import android.support.v4.view.WindowInsetsCompat;
 import android.support.v4.view.accessibility.AccessibilityEventCompat;
 import android.support.v4.view.accessibility.AccessibilityNodeInfoCompat;
 import android.support.v4.view.accessibility.AccessibilityRecordCompat;
@@ -95,7 +97,7 @@ import java.util.List;
  *      complete}
  */
 public class GalleryViewPager extends ViewGroup {
-  private static final String TAG = "ViewPager";
+  private static final String TAG = "GalleryViewPager";
   private static final boolean DEBUG = false;
 
   private static final boolean USE_CACHE = false;
@@ -150,7 +152,10 @@ public class GalleryViewPager extends ViewGroup {
   private int mRestoredCurItem = -1;
   private Parcelable mRestoredAdapterState = null;
   private ClassLoader mRestoredClassLoader = null;
+
   private Scroller mScroller;
+  private boolean mIsScrollStarted;
+
   private PagerObserver mObserver;
 
   private int mPageMargin;
@@ -260,6 +265,9 @@ public class GalleryViewPager extends ViewGroup {
 
   private int mScrollState = SCROLL_STATE_IDLE;
 
+  //非中心的页面,每距离中心一层的缩小系数
+  private float mNarrowFactor = 0.9f;
+
   /**
    * Callback interface for responding to changing state of the selected page.
    */
@@ -290,9 +298,9 @@ public class GalleryViewPager extends ViewGroup {
      * or when it is fully stopped/idle.
      *
      * @param state The new scroll state.
-     * @see GalleryViewPager#SCROLL_STATE_IDLE
-     * @see GalleryViewPager#SCROLL_STATE_DRAGGING
-     * @see GalleryViewPager#SCROLL_STATE_SETTLING
+     * @see ViewPager#SCROLL_STATE_IDLE
+     * @see ViewPager#SCROLL_STATE_DRAGGING
+     * @see ViewPager#SCROLL_STATE_SETTLING
      */
     public void onPageScrollStateChanged(int state);
   }
@@ -389,11 +397,64 @@ public class GalleryViewPager extends ViewGroup {
       ViewCompat.setImportantForAccessibility(this,
           ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES);
     }
+
+    ViewCompat.setOnApplyWindowInsetsListener(this,
+        new android.support.v4.view.OnApplyWindowInsetsListener() {
+          private final Rect mTempRect = new Rect();
+
+          @Override
+          public WindowInsetsCompat onApplyWindowInsets(final View v,
+              final WindowInsetsCompat originalInsets) {
+            // First let the ViewPager itself try and consume them...
+            final WindowInsetsCompat applied =
+                ViewCompat.onApplyWindowInsets(v, originalInsets);
+            if (applied.isConsumed()) {
+              // If the ViewPager consumed all insets, return now
+              return applied;
+            }
+
+            // Now we'll manually dispatch the insets to our children. Since ViewPager
+            // children are always full-height, we do not want to use the standard
+            // ViewGroup dispatchApplyWindowInsets since if child 0 consumes them,
+            // the rest of the children will not receive any insets. To workaround this
+            // we manually dispatch the applied insets, not allowing children to
+            // consume them from each other. We do however keep track of any insets
+            // which are consumed, returning the union of our children's consumption
+            final Rect res = mTempRect;
+            res.left = applied.getSystemWindowInsetLeft();
+            res.top = applied.getSystemWindowInsetTop();
+            res.right = applied.getSystemWindowInsetRight();
+            res.bottom = applied.getSystemWindowInsetBottom();
+
+            for (int i = 0, count = getChildCount(); i < count; i++) {
+              final WindowInsetsCompat childInsets = ViewCompat
+                  .dispatchApplyWindowInsets(getChildAt(i), applied);
+              // Now keep track of any consumed by tracking each dimension's min
+              // value
+              res.left = Math.min(childInsets.getSystemWindowInsetLeft(),
+                  res.left);
+              res.top = Math.min(childInsets.getSystemWindowInsetTop(),
+                  res.top);
+              res.right = Math.min(childInsets.getSystemWindowInsetRight(),
+                  res.right);
+              res.bottom = Math.min(childInsets.getSystemWindowInsetBottom(),
+                  res.bottom);
+            }
+
+            // Now return a new WindowInsets, using the consumed window insets
+            return applied.replaceSystemWindowInsets(
+                res.left, res.top, res.right, res.bottom);
+          }
+        });
   }
 
   @Override
   protected void onDetachedFromWindow() {
     removeCallbacks(mEndScrollRunnable);
+    // To be on the safe side, abort the scroller
+    if ((mScroller != null) && !mScroller.isFinished()) {
+      mScroller.abortAnimation();
+    }
     super.onDetachedFromWindow();
   }
 
@@ -417,7 +478,9 @@ public class GalleryViewPager extends ViewGroup {
    */
   public void setAdapter(PagerAdapter adapter) {
     if (mAdapter != null) {
-      mAdapter.unregisterDataSetObserver(mObserver);
+      if (mObserver != null) {
+        mAdapter.unregisterDataSetObserver(mObserver);
+      }
       mAdapter.startUpdate(this);
       for (int i = 0; i < mItems.size(); i++) {
         final ItemInfo ii = mItems.get(i);
@@ -567,7 +630,7 @@ public class GalleryViewPager extends ViewGroup {
     if (curInfo != null) {
       final int width = getClientWidth();
       destX = (int) (width * Math.max(mFirstOffset,
-          Math.min(curInfo.offset, mLastOffset)));
+          Math.min(curInfo.offset - getItemOffset(), mLastOffset)));
     }
     if (smoothScroll) {
       smoothScrollTo(destX, 0, velocity);
@@ -835,7 +898,21 @@ public class GalleryViewPager extends ViewGroup {
       setScrollingCacheEnabled(false);
       return;
     }
-    int sx = getScrollX();
+
+    int sx;
+    boolean wasScrolling = (mScroller != null) && !mScroller.isFinished();
+    if (wasScrolling) {
+      // We're in the middle of a previously initiated scrolling. Check to see
+      // whether that scrolling has actually started (if we always call getStartX
+      // we can get a stale value from the scroller if it hadn't yet had its first
+      // computeScrollOffset call) to decide what is the current scrolling position.
+      sx = mIsScrollStarted ? mScroller.getCurrX() : mScroller.getStartX();
+      // And abort the current scrolling.
+      mScroller.abortAnimation();
+      setScrollingCacheEnabled(false);
+    } else {
+      sx = getScrollX();
+    }
     int sy = getScrollY();
     int dx = x - sx;
     int dy = y - sy;
@@ -855,7 +932,7 @@ public class GalleryViewPager extends ViewGroup {
     final float distance = halfWidth + halfWidth *
         distanceInfluenceForSnapDuration(distanceRatio);
 
-    int duration = 0;
+    int duration;
     velocity = Math.abs(velocity);
     if (velocity > 0) {
       duration = 4 * Math.round(1000 * Math.abs(distance / velocity));
@@ -866,6 +943,9 @@ public class GalleryViewPager extends ViewGroup {
     }
     duration = Math.min(duration, MAX_SETTLE_DURATION);
 
+    // Reset the "scroll started" flag. It will be flipped to true in all places
+    // where we call computeScrollOffset().
+    mIsScrollStarted = false;
     mScroller.startScroll(sx, sy, dx, dy, duration);
     ViewCompat.postInvalidateOnAnimation(this);
   }
@@ -960,9 +1040,7 @@ public class GalleryViewPager extends ViewGroup {
 
   void populate(int newCurrentItem) {
     ItemInfo oldCurInfo = null;
-    int focusDirection = View.FOCUS_FORWARD;
     if (mCurItem != newCurrentItem) {
-      focusDirection = mCurItem < newCurrentItem ? View.FOCUS_RIGHT : View.FOCUS_LEFT;
       oldCurInfo = infoForPosition(mCurItem);
       mCurItem = newCurrentItem;
     }
@@ -1137,7 +1215,7 @@ public class GalleryViewPager extends ViewGroup {
           View child = getChildAt(i);
           ii = infoForChild(child);
           if (ii != null && ii.position == mCurItem) {
-            if (child.requestFocus(focusDirection)) {
+            if (child.requestFocus(View.FOCUS_FORWARD)) {
               break;
             }
           }
@@ -1217,9 +1295,9 @@ public class GalleryViewPager extends ViewGroup {
     final int itemCount = mItems.size();
     float offset = curItem.offset;
     int pos = curItem.position - 1;
-    mFirstOffset = curItem.position == 0 ? curItem.offset : -Float.MAX_VALUE;
+    mFirstOffset = curItem.position == 0 ? curItem.offset - getItemOffset() : -Float.MAX_VALUE;
     mLastOffset = curItem.position == N - 1 ?
-        curItem.offset + curItem.widthFactor - 1 : Float.MAX_VALUE;
+        curItem.offset + curItem.widthFactor - 1 + getItemOffset() : Float.MAX_VALUE;
     // Previous pages
     for (int i = curIndex - 1; i >= 0; i--, pos--) {
       final ItemInfo ii = mItems.get(i);
@@ -1228,7 +1306,7 @@ public class GalleryViewPager extends ViewGroup {
       }
       offset -= ii.widthFactor + marginOffset;
       ii.offset = offset;
-      if (ii.position == 0) mFirstOffset = offset;
+      if (ii.position == 0) mFirstOffset = offset - getItemOffset();
     }
     offset = curItem.offset + curItem.widthFactor + marginOffset;
     pos = curItem.position + 1;
@@ -1239,7 +1317,7 @@ public class GalleryViewPager extends ViewGroup {
         offset += mAdapter.getPageWidth(pos++) + marginOffset;
       }
       if (ii.position == N - 1) {
-        mLastOffset = offset + ii.widthFactor - 1;
+        mLastOffset = offset + ii.widthFactor - 1 + getItemOffset();
       }
       ii.offset = offset;
       offset += ii.widthFactor + marginOffset;
@@ -1510,24 +1588,21 @@ public class GalleryViewPager extends ViewGroup {
 
   private void recomputeScrollPosition(int width, int oldWidth, int margin, int oldMargin) {
     if (oldWidth > 0 && !mItems.isEmpty()) {
-      final int widthWithMargin = width - getPaddingLeft() - getPaddingRight() + margin;
-      final int oldWidthWithMargin = oldWidth - getPaddingLeft() - getPaddingRight()
-          + oldMargin;
-      final int xpos = getScrollX();
-      final float pageOffset = (float) xpos / oldWidthWithMargin;
-      final int newOffsetPixels = (int) (pageOffset * widthWithMargin);
-
-      scrollTo(newOffsetPixels, getScrollY());
       if (!mScroller.isFinished()) {
-        // We now return to your regularly scheduled scroll, already in progress.
-        final int newDuration = mScroller.getDuration() - mScroller.timePassed();
-        ItemInfo targetInfo = infoForPosition(mCurItem);
-        mScroller.startScroll(newOffsetPixels, 0,
-            (int) (targetInfo.offset * width), 0, newDuration);
+        mScroller.setFinalX(getCurrentItem() * getClientWidth());
+      } else {
+        final int widthWithMargin = width - getPaddingLeft() - getPaddingRight() + margin;
+        final int oldWidthWithMargin = oldWidth - getPaddingLeft() - getPaddingRight()
+            + oldMargin;
+        final int xpos = getScrollX();
+        final float pageOffset = (float) xpos / oldWidthWithMargin;
+        final int newOffsetPixels = (int) (pageOffset * widthWithMargin);
+
+        scrollTo(newOffsetPixels, getScrollY());
       }
     } else {
       final ItemInfo ii = infoForPosition(mCurItem);
-      final float scrollOffset = ii != null ? Math.min(ii.offset, mLastOffset) : 0;
+      final float scrollOffset = ii != null ? Math.min(ii.offset + getItemOffset(), mLastOffset) : 0;
       final int scrollPos = (int) (scrollOffset *
           (width - getPaddingLeft() - getPaddingRight()));
       if (scrollPos != getScrollX()) {
@@ -1648,6 +1723,7 @@ public class GalleryViewPager extends ViewGroup {
 
   @Override
   public void computeScroll() {
+    mIsScrollStarted = true;
     if (!mScroller.isFinished() && mScroller.computeScrollOffset()) {
       int oldX = getScrollX();
       int oldY = getScrollY();
@@ -1686,7 +1762,7 @@ public class GalleryViewPager extends ViewGroup {
     final int widthWithMargin = width + mPageMargin;
     final float marginOffset = (float) mPageMargin / width;
     final int currentPage = ii.position;
-    final float pageOffset = (((float) xpos / width) - ii.offset) /
+    final float pageOffset = (((float) xpos / width) + getItemOffset() - ii.offset) /
         (ii.widthFactor + marginOffset);
     final int offsetPixels = (int) (pageOffset * widthWithMargin);
 
@@ -1755,21 +1831,44 @@ public class GalleryViewPager extends ViewGroup {
 
     dispatchOnPageScrolled(position, offset, offsetPixels);
 
+    final int scrollX = getScrollX();
+    int width = getClientWidth();
+    final int currentItemLeft = scrollX + (int) (width * getItemOffset());
+    final float distanceNarrowFactor = getDistanceNarrowFactor();
+    for (int i = 0; i < getChildCount(); i++) {
+      final View child = getChildAt(i);
+      final LayoutParams lp = (LayoutParams) child.getLayoutParams();
+      if (lp.isDecor) continue;
+      int centerDistance = Math.abs(child.getLeft() - currentItemLeft);
+      float scaleValue =  1 - centerDistance * distanceNarrowFactor;
+      if (scaleValue < 0) {
+        scaleValue = 0;
+      }
+      child.setScaleX(scaleValue);
+      child.setScaleY(scaleValue);
+    }
+
     if (mPageTransformer != null) {
-      final int scrollX = getScrollX();
       final int childCount = getChildCount();
       for (int i = 0; i < childCount; i++) {
         final View child = getChildAt(i);
         final LayoutParams lp = (LayoutParams) child.getLayoutParams();
 
         if (lp.isDecor) continue;
-
         final float transformPos = (float) (child.getLeft() - scrollX) / getClientWidth();
         mPageTransformer.transformPage(child, transformPos);
       }
     }
 
     mCalledSuper = true;
+  }
+
+  private float mDistanceNarrowFactor = -1;
+  private float getDistanceNarrowFactor() {
+    if (mDistanceNarrowFactor < 0) {
+      mDistanceNarrowFactor = (1f - mNarrowFactor) / getClientWidth() / mAdapter.getPageWidth(0);
+    }
+    return mDistanceNarrowFactor;
   }
 
   private void dispatchOnPageScrolled(int position, float offset, int offsetPixels) {
@@ -1828,15 +1927,18 @@ public class GalleryViewPager extends ViewGroup {
     if (needPopulate) {
       // Done with scroll, no longer want to cache view drawing.
       setScrollingCacheEnabled(false);
-      mScroller.abortAnimation();
-      int oldX = getScrollX();
-      int oldY = getScrollY();
-      int x = mScroller.getCurrX();
-      int y = mScroller.getCurrY();
-      if (oldX != x || oldY != y) {
-        scrollTo(x, y);
-        if (x != oldX) {
-          pageScrolled(x);
+      boolean wasScrolling = !mScroller.isFinished();
+      if (wasScrolling) {
+        mScroller.abortAnimation();
+        int oldX = getScrollX();
+        int oldY = getScrollY();
+        int x = mScroller.getCurrX();
+        int y = mScroller.getCurrY();
+        if (oldX != x || oldY != y) {
+          scrollTo(x, y);
+          if (x != oldX) {
+            pageScrolled(x);
+          }
         }
       }
     }
@@ -1884,13 +1986,7 @@ public class GalleryViewPager extends ViewGroup {
     if (action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_UP) {
       // Release the drag.
       if (DEBUG) Log.v(TAG, "Intercept done!");
-      mIsBeingDragged = false;
-      mIsUnableToDrag = false;
-      mActivePointerId = INVALID_POINTER;
-      if (mVelocityTracker != null) {
-        mVelocityTracker.recycle();
-        mVelocityTracker = null;
-      }
+      resetTouch();
       return false;
     }
 
@@ -1976,6 +2072,7 @@ public class GalleryViewPager extends ViewGroup {
         mActivePointerId = MotionEventCompat.getPointerId(ev, 0);
         mIsUnableToDrag = false;
 
+        mIsScrollStarted = true;
         mScroller.computeScrollOffset();
         if (mScrollState == SCROLL_STATE_SETTLING &&
             Math.abs(mScroller.getFinalX() - mScroller.getCurrX()) > mCloseEnough) {
@@ -2057,6 +2154,11 @@ public class GalleryViewPager extends ViewGroup {
       case MotionEvent.ACTION_MOVE:
         if (!mIsBeingDragged) {
           final int pointerIndex = MotionEventCompat.findPointerIndex(ev, mActivePointerId);
+          if (pointerIndex == -1) {
+            // A child has consumed some touch events and put us into an inconsistent state.
+            needsInvalidate = resetTouch();
+            break;
+          }
           final float x = MotionEventCompat.getX(ev, pointerIndex);
           final float xDiff = Math.abs(x - mLastMotionX);
           final float y = MotionEventCompat.getY(ev, pointerIndex);
@@ -2098,8 +2200,10 @@ public class GalleryViewPager extends ViewGroup {
           final int width = getClientWidth();
           final int scrollX = getScrollX();
           final ItemInfo ii = infoForCurrentScrollPosition();
+          final float marginOffset = (float) mPageMargin / width;
           final int currentPage = ii.position;
-          final float pageOffset = (((float) scrollX / width) - ii.offset) / ii.widthFactor;
+          final float pageOffset = (((float) scrollX / width) + getItemOffset() - ii.offset)
+              / (ii.widthFactor + marginOffset);
           final int activePointerIndex =
               MotionEventCompat.findPointerIndex(ev, mActivePointerId);
           final float x = MotionEventCompat.getX(ev, activePointerIndex);
@@ -2108,17 +2212,13 @@ public class GalleryViewPager extends ViewGroup {
               totalDelta);
           setCurrentItemInternal(nextPage, true, true, initialVelocity);
 
-          mActivePointerId = INVALID_POINTER;
-          endDrag();
-          needsInvalidate = mLeftEdge.onRelease() | mRightEdge.onRelease();
+          needsInvalidate = resetTouch();
         }
         break;
       case MotionEvent.ACTION_CANCEL:
         if (mIsBeingDragged) {
           scrollToItem(mCurItem, true, 0, false);
-          mActivePointerId = INVALID_POINTER;
-          endDrag();
-          needsInvalidate = mLeftEdge.onRelease() | mRightEdge.onRelease();
+          needsInvalidate = resetTouch();
         }
         break;
       case MotionEventCompat.ACTION_POINTER_DOWN: {
@@ -2138,6 +2238,14 @@ public class GalleryViewPager extends ViewGroup {
       ViewCompat.postInvalidateOnAnimation(this);
     }
     return true;
+  }
+
+  private boolean resetTouch() {
+    boolean needsInvalidate;
+    mActivePointerId = INVALID_POINTER;
+    endDrag();
+    needsInvalidate = mLeftEdge.onRelease() | mRightEdge.onRelease();
+    return needsInvalidate;
   }
 
   private void requestParentDisallowInterceptTouchEvent(boolean disallowIntercept) {
@@ -2223,11 +2331,15 @@ public class GalleryViewPager extends ViewGroup {
 
       final float leftBound = offset;
       final float rightBound = offset + ii.widthFactor + marginOffset;
-      if (first || scrollOffset >= leftBound) {
+      if (first || scrollOffset + getItemOffset() >= leftBound) {
         if (scrollOffset < rightBound || i == mItems.size() - 1) {
+          Log.v("piapiapia", "scrollOffset:" + scrollOffset + ", itemOffset:" + ii.offset);
+          Log.v("piapiapia", "infoForCurrentScrollPosition:" + ii.position);
           return ii;
         }
       } else {
+        Log.v("piapiapia", "scrollOffset:" + scrollOffset + ", itemOffset:" + lastItem.offset);
+        Log.v("piapiapia", "infoForCurrentScrollPosition:" + lastItem.position);
         return lastItem;
       }
       first = false;
@@ -2236,6 +2348,8 @@ public class GalleryViewPager extends ViewGroup {
       lastWidth = ii.widthFactor;
       lastItem = ii;
     }
+    Log.v("piapiapia", "scrollOffset:" + scrollOffset + ", itemOffset:" + lastItem.offset);
+    Log.v("piapiapia", "infoForCurrentScrollPosition:" + lastItem.position);
 
     return lastItem;
   }
@@ -2334,8 +2448,8 @@ public class GalleryViewPager extends ViewGroup {
         }
 
         if (drawAt + mPageMargin > scrollX) {
-          mMarginDrawable.setBounds((int) drawAt, mTopPageBounds,
-              (int) (drawAt + mPageMargin + 0.5f), mBottomPageBounds);
+          mMarginDrawable.setBounds(Math.round(drawAt), mTopPageBounds,
+              Math.round(drawAt + mPageMargin), mBottomPageBounds);
           mMarginDrawable.draw(canvas);
         }
 
@@ -2394,20 +2508,22 @@ public class GalleryViewPager extends ViewGroup {
       throw new IllegalStateException("No fake drag in progress. Call beginFakeDrag first.");
     }
 
-    final VelocityTracker velocityTracker = mVelocityTracker;
-    velocityTracker.computeCurrentVelocity(1000, mMaximumVelocity);
-    int initialVelocity = (int) VelocityTrackerCompat.getXVelocity(
-        velocityTracker, mActivePointerId);
-    mPopulatePending = true;
-    final int width = getClientWidth();
-    final int scrollX = getScrollX();
-    final ItemInfo ii = infoForCurrentScrollPosition();
-    final int currentPage = ii.position;
-    final float pageOffset = (((float) scrollX / width) - ii.offset) / ii.widthFactor;
-    final int totalDelta = (int) (mLastMotionX - mInitialMotionX);
-    int nextPage = determineTargetPage(currentPage, pageOffset, initialVelocity,
-        totalDelta);
-    setCurrentItemInternal(nextPage, true, true, initialVelocity);
+    if (mAdapter != null) {
+      final VelocityTracker velocityTracker = mVelocityTracker;
+      velocityTracker.computeCurrentVelocity(1000, mMaximumVelocity);
+      int initialVelocity = (int) VelocityTrackerCompat.getXVelocity(
+          velocityTracker, mActivePointerId);
+      mPopulatePending = true;
+      final int width = getClientWidth();
+      final int scrollX = getScrollX();
+      final ItemInfo ii = infoForCurrentScrollPosition();
+      final int currentPage = ii.position;
+      final float pageOffset = (((float) scrollX / width) + getItemOffset() - ii.offset) / ii.widthFactor;
+      final int totalDelta = (int) (mLastMotionX - mInitialMotionX);
+      int nextPage = determineTargetPage(currentPage, pageOffset, initialVelocity,
+          totalDelta);
+      setCurrentItemInternal(nextPage, true, true, initialVelocity);
+    }
     endDrag();
 
     mFakeDragging = false;
@@ -2423,6 +2539,10 @@ public class GalleryViewPager extends ViewGroup {
   public void fakeDragBy(float xOffset) {
     if (!mFakeDragging) {
       throw new IllegalStateException("No fake drag in progress. Call beginFakeDrag first.");
+    }
+
+    if (mAdapter == null) {
+      return;
     }
 
     mLastMotionX += xOffset;
@@ -2851,13 +2971,34 @@ public class GalleryViewPager extends ViewGroup {
     return new LayoutParams(getContext(), attrs);
   }
 
+  private float mItemOffset = 0;
+  private float getItemOffset() {
+    if (mItemOffset > 0) {
+      return mItemOffset;
+    }
+    float widthFactor = mAdapter.getPageWidth(0);
+    if (widthFactor >= 1) {
+      throw new IllegalStateException("gallery viewpager require widthFactor < 1");
+    }
+    mItemOffset = (1 - mAdapter.getPageWidth(0)) * 0.5f * getResources().getDisplayMetrics().widthPixels / getClientWidth();
+    return mItemOffset;
+  }
+
+  public void setNarrowFactor(float factor) {
+    if (factor < 0 || factor > 1) {
+      throw new IllegalArgumentException("factor must be 0 <= factor <= 1");
+    }
+    mNarrowFactor = factor;
+  }
+
   class MyAccessibilityDelegate extends AccessibilityDelegateCompat {
 
     @Override
     public void onInitializeAccessibilityEvent(View host, AccessibilityEvent event) {
       super.onInitializeAccessibilityEvent(host, event);
-      event.setClassName(GalleryViewPager.class.getName());
-      final AccessibilityRecordCompat recordCompat = AccessibilityRecordCompat.obtain();
+      event.setClassName(ViewPager.class.getName());
+      final AccessibilityRecordCompat recordCompat =
+          AccessibilityEventCompat.asRecord(event);
       recordCompat.setScrollable(canScroll());
       if (event.getEventType() == AccessibilityEventCompat.TYPE_VIEW_SCROLLED
           && mAdapter != null) {
@@ -2870,7 +3011,7 @@ public class GalleryViewPager extends ViewGroup {
     @Override
     public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfoCompat info) {
       super.onInitializeAccessibilityNodeInfo(host, info);
-      info.setClassName(GalleryViewPager.class.getName());
+      info.setClassName(ViewPager.class.getName());
       info.setScrollable(canScroll());
       if (canScrollHorizontally(1)) {
         info.addAction(AccessibilityNodeInfoCompat.ACTION_SCROLL_FORWARD);
