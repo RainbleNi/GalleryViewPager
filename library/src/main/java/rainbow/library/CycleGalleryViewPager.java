@@ -51,6 +51,11 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
+ *
+ * 在GalleryViewPager的基础上加入了循环功能
+ *
+ * 下面是循环特性的介绍
+ *
  * 在原生Viewpager的基础上进行修改, 为了达到循环的效果, 左右都扩展了延伸位,使其position可以小于0,或者>=count,并且在SCROLL_STATE_IDLE
  * 时将其矫正,防治其位置以及偏移量等参数无限扩大至Integer的极限.
  * 其中加入了view的缓存机制,尽可能在循环滑动的过程中减少instance和destroy. 在默认的RecycleMode下,每页的item保证只会instance一次.
@@ -64,6 +69,8 @@ import java.util.List;
  * 添加方法
  *
  * setRecycleMode 让用户选择是否在该destroyItem的时候将其回收掉,一般来说轮播图无需回收.
+ * setNextItem 跳转到下一页,轮播时由于index是增大后在变成初始值这样循环的,所以跳转下一页建议用此函数
+ * setPrivItem 跳转到上一页
  */
 public class CycleGalleryViewPager extends ViewGroup {
     private static final String TAG = "CycleViewPager";
@@ -108,7 +115,7 @@ public class CycleGalleryViewPager extends ViewGroup {
      */
     class NeedReLayoutValue {
         public boolean mHasReuseItem = false;
-        public boolean mHasInstanceNew = false;
+        public boolean mHasChangeChild = false;
     }
 
     private static final Comparator<ItemInfo> COMPARATOR = new Comparator<ItemInfo>(){
@@ -247,6 +254,9 @@ public class CycleGalleryViewPager extends ViewGroup {
     };
 
     private int mScrollState = SCROLL_STATE_IDLE;
+
+    //非中心的页面,每距离中心一层的缩小系数
+    private float mNarrowFactor = 0.9f;
 
     /**
      * Simple implementation of the {@link OnPageChangeListener} interface with stub
@@ -586,7 +596,7 @@ public class CycleGalleryViewPager extends ViewGroup {
         if (curInfo != null) {
             final int width = getClientWidth();
             destX = (int) (width * Math.max(mFirstOffset,
-                    Math.min(curInfo.offset, mLastOffset)));
+                    Math.min(curInfo.offset - getItemOffset(), mLastOffset)));
         }
         if (smoothScroll) {
             smoothScrollTo(destX, 0, velocity);
@@ -917,6 +927,12 @@ public class CycleGalleryViewPager extends ViewGroup {
     ItemInfo addNewItem(int position, int index, NeedReLayoutValue value, List<ItemInfo> infoList) {
         ItemInfo ii = getReusedItemInfo(position);
         if (ii != null) {
+            if (!mDestroyItemWhenNeeded) {
+                View view = (View) ii.object;
+                if (view.getParent() == null) {
+                    addView(view);
+                }
+            }
             value.mHasReuseItem = true;
         } else {
             ii = new ItemInfo();
@@ -942,9 +958,15 @@ public class CycleGalleryViewPager extends ViewGroup {
         ItemInfo ii = getReusedItemInfo(info.position);
         if (ii == null) {
             info.object = mAdapter.instantiateItem(this, info.position);
-            value.mHasInstanceNew = true;
+            value.mHasChangeChild = true;
         } else {
             info.object = ii.object;
+            if (!mDestroyItemWhenNeeded) {
+                View view = (View) info.object;
+                if (view.getParent() == null) {
+                    addView(view);
+                }
+            }
             value.mHasReuseItem = true;
         }
     }
@@ -1176,11 +1198,22 @@ public class CycleGalleryViewPager extends ViewGroup {
         }
 
 
-        if (mDestroyItemWhenNeeded) {
-            for (ItemInfo info : mUnusedItemInfoList) {
-                mAdapter.destroyItem(this, info.position, info.object);
+        if (mUnusedItemInfoList.size() > 0) {
+            needRelayout.mHasChangeChild = true;
+            if (mDestroyItemWhenNeeded) {
+                for (ItemInfo info : mUnusedItemInfoList) {
+                    mAdapter.destroyItem(this, info.position, info.object);
+                }
+                mUnusedItemInfoList.clear();
+            } else {
+                for (ItemInfo info : mUnusedItemInfoList) {
+                    if (info.object instanceof View) {
+                        removeView((View) info.object);
+                    } else {
+                        throw new IllegalArgumentException("please ensure instanceItem return View or setRecycleMode(true)");
+                    }
+                }
             }
-            mUnusedItemInfoList.clear();
         }
 
         calculatePageOffsets(curItem, curIndex, oldCurInfo);
@@ -1229,7 +1262,7 @@ public class CycleGalleryViewPager extends ViewGroup {
                 }
             }
         }
-        if (!needRelayout.mHasInstanceNew && needRelayout.mHasReuseItem) {
+        if (needRelayout.mHasReuseItem) {
             onLayout(false, getLeft(), getTop(), getRight(), getBottom());
         }
     }
@@ -1305,9 +1338,9 @@ public class CycleGalleryViewPager extends ViewGroup {
         final int itemCount = mItems.size();
         float offset = curItem.offset;
         int pos = curItem.position - 1;
-        mFirstOffset = curItem.position == 0 - CYCLE_POSITION_EXTEND ? curItem.offset : -Float.MAX_VALUE;
+        mFirstOffset = curItem.position == 0 - CYCLE_POSITION_EXTEND ? curItem.offset - getItemOffset() : -Float.MAX_VALUE;
         mLastOffset = curItem.position == N - 1 + CYCLE_POSITION_EXTEND ?
-                curItem.offset + curItem.widthFactor - 1 : Float.MAX_VALUE;
+                curItem.offset + curItem.widthFactor - 1 + getItemOffset() : Float.MAX_VALUE;
         // Previous pages
         for (int i = curIndex - 1; i >= 0; i--, pos--) {
             final ItemInfo ii = mItems.get(i);
@@ -1316,7 +1349,7 @@ public class CycleGalleryViewPager extends ViewGroup {
             }
             offset -= ii.widthFactor + marginOffset;
             ii.offset = offset;
-            if (ii.position == 0 - CYCLE_POSITION_EXTEND) mFirstOffset = offset;
+            if (ii.position == 0 - CYCLE_POSITION_EXTEND) mFirstOffset = offset - getItemOffset();
         }
         offset = curItem.offset + curItem.widthFactor + marginOffset;
         pos = curItem.position + 1;
@@ -1327,7 +1360,7 @@ public class CycleGalleryViewPager extends ViewGroup {
                 offset += mAdapter.getPageWidth(pos++) + marginOffset;
             }
             if (ii.position == N - 1 + CYCLE_POSITION_EXTEND) {
-                mLastOffset = offset + ii.widthFactor - 1;
+                mLastOffset = offset + ii.widthFactor - 1 + getItemOffset();
             }
             ii.offset = offset;
             offset += ii.widthFactor + marginOffset;
@@ -1602,7 +1635,7 @@ public class CycleGalleryViewPager extends ViewGroup {
             scrollToItem(mCurItem, false, 0, false);
         } else {
             final ItemInfo ii = infoForPosition(mCurItem);
-            final float scrollOffset = ii != null ? Math.min(ii.offset, mLastOffset) : 0;
+            final float scrollOffset = ii != null ? Math.min(ii.offset + getItemOffset(), mLastOffset) : 0;
             final int scrollPos = (int) (scrollOffset *
                     (width - getPaddingLeft() - getPaddingRight()));
             if (scrollPos != getScrollX()) {
@@ -1762,7 +1795,7 @@ public class CycleGalleryViewPager extends ViewGroup {
         final int widthWithMargin = width + mPageMargin;
         final float marginOffset = (float) mPageMargin / width;
         final int currentPage = ii.position;
-        final float pageOffset = (((float) xpos / width) - ii.offset) /
+        final float pageOffset = (((float) xpos / width) + getItemOffset() - ii.offset) /
                 (ii.widthFactor + marginOffset);
         final int offsetPixels = (int) (pageOffset * widthWithMargin);
 
@@ -1831,8 +1864,26 @@ public class CycleGalleryViewPager extends ViewGroup {
 
         dispatchOnPageScrolled(position, offset, offsetPixels);
 
+        final int scrollX = getScrollX();
+        int width = getClientWidth();
+        final int currentItemLeft = scrollX + (int) (width * getItemOffset());
+        final float distanceNarrowFactor = getDistanceNarrowFactor();
+        for (int i = 0; i < getChildCount(); i++) {
+            final View child = getChildAt(i);
+            final LayoutParams lp = (LayoutParams) child.getLayoutParams();
+            if (lp.isDecor) continue;
+            int centerDistance = Math.abs(child.getLeft() - currentItemLeft);
+            float scaleValue =  1 - centerDistance * distanceNarrowFactor;
+            if (scaleValue < 0) {
+                scaleValue = 0;
+            }
+
+            ItemInfo info = infoForChild(child);
+            child.setScaleX(scaleValue);
+            child.setScaleY(scaleValue);
+        }
+
         if (mPageTransformer != null) {
-            final int scrollX = getScrollX();
             final int childCount = getChildCount();
             for (int i = 0; i < childCount; i++) {
                 final View child = getChildAt(i);
@@ -1846,6 +1897,14 @@ public class CycleGalleryViewPager extends ViewGroup {
         }
 
         mCalledSuper = true;
+    }
+
+    private float mDistanceNarrowFactor = -1;
+    private float getDistanceNarrowFactor() {
+        if (mDistanceNarrowFactor < 0) {
+            mDistanceNarrowFactor = (1f - mNarrowFactor) / getClientWidth() / mAdapter.getPageWidth(0);
+        }
+        return mDistanceNarrowFactor;
     }
 
     private void dispatchOnPageScrolled(int position, float offset, int offsetPixels) {
@@ -2179,7 +2238,7 @@ public class CycleGalleryViewPager extends ViewGroup {
                     final int scrollX = getScrollX();
                     final ItemInfo ii = infoForCurrentScrollPosition();
                     final int currentPage = ii.position;
-                    final float pageOffset = (((float) scrollX / width) - ii.offset) / ii.widthFactor;
+                    final float pageOffset = (((float) scrollX / width) + getItemOffset() - ii.offset) / ii.widthFactor;
                     final int activePointerIndex =
                             MotionEventCompat.findPointerIndex(ev, mActivePointerId);
                     final float x = MotionEventCompat.getX(ev, activePointerIndex);
@@ -2488,7 +2547,7 @@ public class CycleGalleryViewPager extends ViewGroup {
             final int scrollX = getScrollX();
             final ItemInfo ii = infoForCurrentScrollPosition();
             final int currentPage = ii.position;
-            final float pageOffset = (((float) scrollX / width) - ii.offset) / ii.widthFactor;
+            final float pageOffset = (((float) scrollX / width) + getItemOffset() - ii.offset) / ii.widthFactor;
             final int totalDelta = (int) (mLastMotionX - mInitialMotionX);
             int nextPage = determineTargetPage(currentPage, pageOffset, initialVelocity,
                     totalDelta);
@@ -2941,12 +3000,32 @@ public class CycleGalleryViewPager extends ViewGroup {
         return new LayoutParams(getContext(), attrs);
     }
 
+    private float mItemOffset = 0;
+    private float getItemOffset() {
+        if (mItemOffset > 0) {
+            return mItemOffset;
+        }
+        float widthFactor = mAdapter.getPageWidth(0);
+        if (widthFactor >= 1) {
+            throw new IllegalStateException("gallery viewpager require widthFactor < 1");
+        }
+        mItemOffset = (1 - mAdapter.getPageWidth(0)) * 0.5f * getResources().getDisplayMetrics().widthPixels / getClientWidth();
+        return mItemOffset;
+    }
+
+    public void setNarrowFactor(float factor) {
+        if (factor < 0 || factor > 1) {
+            throw new IllegalArgumentException("factor must be 0 <= factor <= 1");
+        }
+        mNarrowFactor = factor;
+    }
+
     class MyAccessibilityDelegate extends AccessibilityDelegateCompat {
 
         @Override
         public void onInitializeAccessibilityEvent(View host, AccessibilityEvent event) {
             super.onInitializeAccessibilityEvent(host, event);
-            event.setClassName(CycleViewPager.class.getName());
+            event.setClassName(CycleGalleryViewPager.class.getName());
             final AccessibilityRecordCompat recordCompat = AccessibilityRecordCompat.obtain();
             recordCompat.setScrollable(canScroll());
             if (event.getEventType() == AccessibilityEventCompat.TYPE_VIEW_SCROLLED
@@ -2960,7 +3039,7 @@ public class CycleGalleryViewPager extends ViewGroup {
         @Override
         public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfoCompat info) {
             super.onInitializeAccessibilityNodeInfo(host, info);
-            info.setClassName(CycleViewPager.class.getName());
+            info.setClassName(CycleGalleryViewPager.class.getName());
             info.setScrollable(canScroll());
             if (canScrollHorizontally(1)) {
                 info.addAction(AccessibilityNodeInfoCompat.ACTION_SCROLL_FORWARD);

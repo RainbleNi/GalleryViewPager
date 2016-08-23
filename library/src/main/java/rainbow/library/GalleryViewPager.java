@@ -1,19 +1,17 @@
 package rainbow.library;
 
 /*
- * Copyright (C) 2011 The Android Open Source Project
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
+ * 实现Gallery的效果,即current页面位于viewpager的中间,两侧露出前页与后页的临边,前页和后页size相对缩小,突出中心页
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * 关键函数
+ * setNarrowFactor(float factor),如果中心页两侧的页面需要比中心页小一些,达到gallery相似的效果,factor即旁边页尺寸比中心页尺寸.
+ * 建议值为0.7~0.95
+ * 默认为0.9,如果不需要这个效果,需要设置factor为1;
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * 所设置的pagerAdapter中,需要重写getPageWidth方法,建议为0.6~0.85,这样能露出左右页面的同时也突出中心页.
+ * 如果不重写此方法,则中心页占满viewpager大小,和普通的viewpager没有区别了.
+ *
  */
 
 import android.content.Context;
@@ -66,36 +64,6 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-/**
- * Layout manager that allows the user to flip left and right
- * through pages of data.  You supply an implementation of a
- * {@link PagerAdapter} to generate the pages that the view shows.
- *
- * <p>Note this class is currently under early design and
- * development.  The API will likely change in later updates of
- * the compatibility library, requiring changes to the source code
- * of apps when they are compiled against the newer version.</p>
- *
- * <p>ViewPager is most often used in conjunction with {@link android.app.Fragment},
- * which is a convenient way to supply and manage the lifecycle of each page.
- * There are standard adapters implemented for using fragments with the ViewPager,
- * which cover the most common use cases.  These are
- * {@link android.support.v4.app.FragmentPagerAdapter} and
- * {@link android.support.v4.app.FragmentStatePagerAdapter}; each of these
- * classes have simple code showing how to build a full user interface
- * with them.
- *
- * <p>For more information about how to use ViewPager, read <a
- * href="{@docRoot}training/implementing-navigation/lateral.html">Creating Swipe Views with
- * Tabs</a>.</p>
- *
- * <p>Below is a more complicated example of ViewPager, using it in conjunction
- * with {@link android.app.ActionBar} tabs.  You can find other examples of using
- * ViewPager in the API 4+ Support Demos and API 13+ Support Demos sample code.
- *
- * {@sample development/samples/Support13Demos/src/com/example/android/supportv13/app/ActionBarTabsPager.java
- *      complete}
- */
 public class GalleryViewPager extends ViewGroup {
   private static final String TAG = "GalleryViewPager";
   private static final boolean DEBUG = false;
@@ -2331,15 +2299,12 @@ public class GalleryViewPager extends ViewGroup {
 
       final float leftBound = offset;
       final float rightBound = offset + ii.widthFactor + marginOffset;
-      if (first || scrollOffset + getItemOffset() >= leftBound) {
-        if (scrollOffset < rightBound || i == mItems.size() - 1) {
-          Log.v("piapiapia", "scrollOffset:" + scrollOffset + ", itemOffset:" + ii.offset);
-          Log.v("piapiapia", "infoForCurrentScrollPosition:" + ii.position);
+      final float scrollOffsetAdjust = scrollOffset + getItemOffset();
+      if (first || scrollOffsetAdjust >= leftBound) {
+        if (scrollOffsetAdjust < rightBound || i == mItems.size() - 1) {
           return ii;
         }
       } else {
-        Log.v("piapiapia", "scrollOffset:" + scrollOffset + ", itemOffset:" + lastItem.offset);
-        Log.v("piapiapia", "infoForCurrentScrollPosition:" + lastItem.position);
         return lastItem;
       }
       first = false;
@@ -2348,8 +2313,6 @@ public class GalleryViewPager extends ViewGroup {
       lastWidth = ii.widthFactor;
       lastItem = ii;
     }
-    Log.v("piapiapia", "scrollOffset:" + scrollOffset + ", itemOffset:" + lastItem.offset);
-    Log.v("piapiapia", "infoForCurrentScrollPosition:" + lastItem.position);
 
     return lastItem;
   }
@@ -2984,6 +2947,10 @@ public class GalleryViewPager extends ViewGroup {
     return mItemOffset;
   }
 
+  /**
+   *
+   * @param factor 建议值0.7~0.95
+   */
   public void setNarrowFactor(float factor) {
     if (factor < 0 || factor > 1) {
       throw new IllegalArgumentException("factor must be 0 <= factor <= 1");
