@@ -1,8 +1,9 @@
 # GalleryViewPager
 One ViewPager who can implement the effect of Gallery.
+
 [![](https://www.jitpack.io/v/RainbleNi/GalleryViewPager.svg)](https://www.jitpack.io/#RainbleNi/GalleryViewPager)
 
-![ScreenRecord_2016-08-24-14-26-27.gif](http://upload-images.jianshu.io/upload_images/2067811-35c187956e41d491.gif?imageMogr2/auto-orient/strip)
+![ScreenRecord_2016-08-24-14-26-27.gif](http://upload-images.jianshu.io/upload_images/2067811-7e8fe4479d9e5d6b.gif?imageMogr2/auto-orient/strip)
 
 ##Usage
 Is almost same as ViewPager from support.v4.
