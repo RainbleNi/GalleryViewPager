@@ -11,11 +11,13 @@ galleryViewPager.setAdapter(new PagerAdapter() {
      some same as support.v4.view.ViewPager
      .....
   @Override public float getPageWidth(int position) { 
-    return 0.8f;//suggest value from 0.6 to 1.0
+    return 0.8f;//suggest value from 0.6 to 0.85
     }
 }
 ```
 If you need the side page is smaller than the center page, you should set the ratio of the side page to center page.
 ```java
-galleryViewPager.setNarrowFactor(0.9f);
+galleryViewPager.setNarrowFactor(0.9f);//suggest value from 0.7 to 0.95
 ```
+
+CycleGalleryViewPager is a GalleryViewPager which can cycle sliding. Usage please see https://github.com/RainbleNi/CycleViewPager
