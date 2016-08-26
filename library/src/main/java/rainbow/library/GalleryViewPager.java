@@ -2934,16 +2934,16 @@ public class GalleryViewPager extends ViewGroup {
     return new LayoutParams(getContext(), attrs);
   }
 
-  private float mItemOffset = 0;
+  private float mItemOffset = -1;
   private float getItemOffset() {
     if (mItemOffset > 0) {
       return mItemOffset;
     }
     float widthFactor = mAdapter.getPageWidth(0);
-    if (widthFactor >= 1) {
-      throw new IllegalStateException("gallery viewpager require widthFactor < 1");
+    if (widthFactor > 1) {
+      throw new IllegalStateException("gallery viewpager require widthFactor <= 1");
     }
-    mItemOffset = (1 - mAdapter.getPageWidth(0)) * 0.5f * getResources().getDisplayMetrics().widthPixels / getClientWidth();
+    mItemOffset = (1 - widthFactor) / 2;
     return mItemOffset;
   }
 
