@@ -2,7 +2,6 @@
 One ViewPager who can implement the effect of Gallery.
 
 [![](https://www.jitpack.io/v/RainbleNi/GalleryViewPager.svg)](https://www.jitpack.io/#RainbleNi/GalleryViewPager)
-[![](https://www.jitpack.io/v/RainbleNi/GalleryViewPager.svg)](https://www.jitpack.io/#RainbleNi/GalleryViewPager)
 
 演示视频地址(Demon Video) http://v.youku.com/v_show/id_XMTY5Nzc2NzY0MA==.html
 
