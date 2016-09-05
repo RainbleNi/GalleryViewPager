@@ -2958,6 +2958,10 @@ public class GalleryViewPager extends ViewGroup {
     mNarrowFactor = factor;
   }
 
+  public boolean isBeingDraging() {
+    return mIsBeingDragged;
+  }
+
   class MyAccessibilityDelegate extends AccessibilityDelegateCompat {
 
     @Override

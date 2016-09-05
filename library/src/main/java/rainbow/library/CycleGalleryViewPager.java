@@ -3309,4 +3309,8 @@ public class CycleGalleryViewPager extends ViewGroup {
     public void setPrivItem() {
         setCurrentItem(mCurItem - 1);
     }
+
+    public boolean isBeingDraging() {
+        return mIsBeingDragged;
+    }
 }
