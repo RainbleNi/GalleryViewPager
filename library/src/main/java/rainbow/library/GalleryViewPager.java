@@ -1834,6 +1834,9 @@ public class GalleryViewPager extends ViewGroup {
   private float mDistanceNarrowFactor = -1;
   private float getDistanceNarrowFactor() {
     if (mDistanceNarrowFactor < 0) {
+      if (mAdapter == null) {
+        return (1f - mNarrowFactor) / getClientWidth();
+      }
       mDistanceNarrowFactor = (1f - mNarrowFactor) / getClientWidth() / mAdapter.getPageWidth(0);
     }
     return mDistanceNarrowFactor;
