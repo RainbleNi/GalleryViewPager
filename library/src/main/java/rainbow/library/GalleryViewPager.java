@@ -2939,6 +2939,9 @@ public class GalleryViewPager extends ViewGroup {
     if (mItemOffset > 0) {
       return mItemOffset;
     }
+    if (mAdapter == null) {
+      return 0;
+    }
     float widthFactor = mAdapter.getPageWidth(0);
     if (widthFactor > 1) {
       throw new IllegalStateException("gallery viewpager require widthFactor <= 1");
