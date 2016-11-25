@@ -5,6 +5,22 @@ One ViewPager who can implement the effect of Gallery.
 
 演示视频地址(Demon Video) http://v.youku.com/v_show/id_XMTY5Nzc2NzY0MA==.html
 
+Add it in your root build.gradle at the end of repositories:
+```xml
+allprojects {
+		repositories {
+			...
+			maven { url "https://www.jitpack.io" }
+		}
+	}
+```
+Add the dependency
+```xml
+dependencies {
+	        compile 'com.github.RainbleNi:GalleryViewPager:0.0.5'
+	}
+```
+
 ##Usage
 Is almost same as ViewPager from support.v4.
 You should change the page width in PagerAdapter
