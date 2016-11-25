@@ -1120,51 +1120,15 @@ public class CycleGalleryViewPager extends ViewGroup {
         // Fill 3x the available width or up to the number of offscreen
         // pages requested to either side, whichever is larger.
         // If we have no current item we have no work to do.
-        float extraWidthLeft = 0.f;
-        int itemIndex = curIndex - 1;
-        ItemInfo ii = itemIndex >= 0 ? mItems.get(itemIndex) : null;
-        final int clientWidth = getClientWidth();
-        final float leftWidthNeeded = clientWidth <= 0 ? 0 :
-                2.f - curItem.widthFactor + (float) getPaddingLeft() / (float) clientWidth;
-        for (int pos = mCurItem - 1; pos >= 0 - CYCLE_POSITION_EXTEND; pos--) {
-            if (extraWidthLeft >= leftWidthNeeded && pos < startPos) {
-                if (ii == null) {
-                    break;
-                }
-                if (pos == ii.position && !ii.scrolling) {
-                    mUnusedItemInfoList.add(mItems.remove(itemIndex));
-                    if (CYCLE_DEBUG) {
-                        Log.d(TAG, "add to reuse position:" + pos + ", total count:" + mUnusedItemInfoList.size());
-                    }
-                    //mAdapter.destroyItem(this, pos, ii.object);
-                    if (DEBUG) {
-                        Log.i(TAG, "populate() - destroyItem() with pos: " + pos +
-                                " view: " + ((View) ii.object));
-                    }
-                    itemIndex--;
-                    curIndex--;
-                    ii = itemIndex >= 0 ? mItems.get(itemIndex) : null;
-                }
-            } else if (ii != null && pos == ii.position) {
-                extraWidthLeft += ii.widthFactor;
-                itemIndex--;
-                ii = itemIndex >= 0 ? mItems.get(itemIndex) : null;
-            } else {
-                ii = addNewItem(pos, itemIndex + 1, needRelayout,  emptyItemInfoList);
-                extraWidthLeft += ii.widthFactor;
-                curIndex++;
-                ii = itemIndex >= 0 ? mItems.get(itemIndex) : null;
-            }
-        }
-
-        float extraWidthRight = curItem.widthFactor;
-        itemIndex = curIndex + 1;
-        if (extraWidthRight < 2.f) {
-            ii = itemIndex < mItems.size() ? mItems.get(itemIndex) : null;
-            final float rightWidthNeeded = clientWidth <= 0 ? 0 :
-                    (float) getPaddingRight() / (float) clientWidth + 2.f;
-            for (int pos = mCurItem + 1; pos < N + CYCLE_POSITION_EXTEND; pos++) {
-                if (extraWidthRight >= rightWidthNeeded && pos > endPos) {
+        if (curItem != null) {
+            float extraWidthLeft = 0.f;
+            int itemIndex = curIndex - 1;
+            ItemInfo ii = itemIndex >= 0 ? mItems.get(itemIndex) : null;
+            final int clientWidth = getClientWidth();
+            final float leftWidthNeeded = clientWidth <= 0 ? 0
+                : 2.f - curItem.widthFactor + (float) getPaddingLeft() / (float) clientWidth;
+            for (int pos = mCurItem - 1; pos >= 0 - CYCLE_POSITION_EXTEND; pos--) {
+                if (extraWidthLeft >= leftWidthNeeded && pos < startPos) {
                     if (ii == null) {
                         break;
                     }
@@ -1176,47 +1140,85 @@ public class CycleGalleryViewPager extends ViewGroup {
                         //mAdapter.destroyItem(this, pos, ii.object);
                         if (DEBUG) {
                             Log.i(TAG, "populate() - destroyItem() with pos: " + pos +
-                                    " view: " + ((View) ii.object));
+                                " view: " + ((View) ii.object));
                         }
-                        ii = itemIndex < mItems.size() ? mItems.get(itemIndex) : null;
+                        itemIndex--;
+                        curIndex--;
+                        ii = itemIndex >= 0 ? mItems.get(itemIndex) : null;
                     }
                 } else if (ii != null && pos == ii.position) {
-                    extraWidthRight += ii.widthFactor;
-                    itemIndex++;
-                    ii = itemIndex < mItems.size() ? mItems.get(itemIndex) : null;
+                    extraWidthLeft += ii.widthFactor;
+                    itemIndex--;
+                    ii = itemIndex >= 0 ? mItems.get(itemIndex) : null;
                 } else {
-                    ii = addNewItem(pos, itemIndex, needRelayout,  emptyItemInfoList);
-                    itemIndex++;
-                    extraWidthRight += ii.widthFactor;
-                    ii = itemIndex < mItems.size() ? mItems.get(itemIndex) : null;
+                    ii = addNewItem(pos, itemIndex + 1, needRelayout, emptyItemInfoList);
+                    extraWidthLeft += ii.widthFactor;
+                    curIndex++;
+                    ii = itemIndex >= 0 ? mItems.get(itemIndex) : null;
                 }
             }
-        }
 
-        for (ItemInfo info :  emptyItemInfoList) {
-            instanceItem(info, needRelayout);
-        }
-
-
-        if (mUnusedItemInfoList.size() > 0) {
-            needRelayout.mHasChangeChild = true;
-            if (mDestroyItemWhenNeeded) {
-                for (ItemInfo info : mUnusedItemInfoList) {
-                    mAdapter.destroyItem(this, info.position, info.object);
-                }
-                mUnusedItemInfoList.clear();
-            } else {
-                for (ItemInfo info : mUnusedItemInfoList) {
-                    if (info.object instanceof View) {
-                        removeView((View) info.object);
+            float extraWidthRight = curItem.widthFactor;
+            itemIndex = curIndex + 1;
+            if (extraWidthRight < 2.f) {
+                ii = itemIndex < mItems.size() ? mItems.get(itemIndex) : null;
+                final float rightWidthNeeded =
+                    clientWidth <= 0 ? 0 : (float) getPaddingRight() / (float) clientWidth + 2.f;
+                for (int pos = mCurItem + 1; pos < N + CYCLE_POSITION_EXTEND; pos++) {
+                    if (extraWidthRight >= rightWidthNeeded && pos > endPos) {
+                        if (ii == null) {
+                            break;
+                        }
+                        if (pos == ii.position && !ii.scrolling) {
+                            mUnusedItemInfoList.add(mItems.remove(itemIndex));
+                            if (CYCLE_DEBUG) {
+                                Log.d(TAG, "add to reuse position:" + pos + ", total count:" + mUnusedItemInfoList.size());
+                            }
+                            //mAdapter.destroyItem(this, pos, ii.object);
+                            if (DEBUG) {
+                                Log.i(TAG, "populate() - destroyItem() with pos: " + pos +
+                                    " view: " + ((View) ii.object));
+                            }
+                            ii = itemIndex < mItems.size() ? mItems.get(itemIndex) : null;
+                        }
+                    } else if (ii != null && pos == ii.position) {
+                        extraWidthRight += ii.widthFactor;
+                        itemIndex++;
+                        ii = itemIndex < mItems.size() ? mItems.get(itemIndex) : null;
                     } else {
-                        throw new IllegalArgumentException("please ensure instanceItem return View or setRecycleMode(true)");
+                        ii = addNewItem(pos, itemIndex, needRelayout, emptyItemInfoList);
+                        itemIndex++;
+                        extraWidthRight += ii.widthFactor;
+                        ii = itemIndex < mItems.size() ? mItems.get(itemIndex) : null;
                     }
                 }
             }
-        }
 
-        calculatePageOffsets(curItem, curIndex, oldCurInfo);
+            for (ItemInfo info : emptyItemInfoList) {
+                instanceItem(info, needRelayout);
+            }
+
+            if (mUnusedItemInfoList.size() > 0) {
+                needRelayout.mHasChangeChild = true;
+                if (mDestroyItemWhenNeeded) {
+                    for (ItemInfo info : mUnusedItemInfoList) {
+                        mAdapter.destroyItem(this, info.position, info.object);
+                    }
+                    mUnusedItemInfoList.clear();
+                } else {
+                    for (ItemInfo info : mUnusedItemInfoList) {
+                        if (info.object instanceof View) {
+                            removeView((View) info.object);
+                        } else {
+                            throw new IllegalArgumentException(
+                                "please ensure instanceItem return View or setRecycleMode(true)");
+                        }
+                    }
+                }
+            }
+
+            calculatePageOffsets(curItem, curIndex, oldCurInfo);
+        }
 
         if (DEBUG) {
             Log.i(TAG, "Current page list:");
@@ -3004,6 +3006,9 @@ public class CycleGalleryViewPager extends ViewGroup {
     private float getItemOffset() {
         if (mItemOffset > 0) {
             return mItemOffset;
+        }
+        if (mAdapter == null) {
+            return 0;
         }
         float widthFactor = mAdapter.getPageWidth(0);
         if (widthFactor > 1) {
